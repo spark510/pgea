@@ -11,9 +11,9 @@ Welcome to pangeapy's documentation!
 
 **Interactive Tools**
 
-- `Cell Annotation Explorer <cellplot/index.html>`_
-- `Meta Annotation Plot <metaplot/index.html>`_
-- `Uncertainty Explorer <uncertainty/index.html>`_
+- `Cell Annotation Explorer <cellplot/>`_
+- `Meta Annotation Plot <metaplot/>`_
+- `Uncertainty Explorer <uncertainty/>`_
 
 .. toctree::
    :maxdepth: 1
