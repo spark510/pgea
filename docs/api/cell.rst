@@ -1,0 +1,7 @@
+Cell module
+===========
+
+.. automodule:: pangeapy.cell
+   :members:
+   :undoc-members:
+   :show-inheritance:

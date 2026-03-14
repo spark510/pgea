@@ -1,7 +1,7 @@
-Meta module
-===========
+Models module
+=============
 
-.. automodule:: pangeapy.meta
+.. automodule:: pangeapy.models
    :members:
    :undoc-members:
    :show-inheritance:
