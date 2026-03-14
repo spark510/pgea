@@ -11,6 +11,12 @@ Welcome to pangeapy's documentation!
 
 .. toctree::
    :maxdepth: 1
+   :caption: Interactive Tools
+
+   Cell Annotation Explorer <pages/cellplot/index>
+
+.. toctree::
+   :maxdepth: 1
    :caption: API Reference
 
    api/cell

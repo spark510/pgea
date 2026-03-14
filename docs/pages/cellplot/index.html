@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PANGEApy - Cell Annotation Explorer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f8f9fa;
+      color: #333;
+    }
+
+    /* --- Sidebar --- */
+    .sidebar {
+      position: fixed; top: 0; left: 0;
+      width: 260px; height: 100vh;
+      background: #1a1a2e;
+      color: #ccc;
+      padding: 24px 20px;
+      overflow-y: auto;
+    }
+    .sidebar h2 {
+      color: #fff;
+      font-size: 18px;
+      margin-bottom: 24px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #333;
+    }
+    .sidebar a {
+      display: block;
+      color: #aaa;
+      text-decoration: none;
+      padding: 8px 12px;
+      border-radius: 6px;
+      margin-bottom: 4px;
+      font-size: 14px;
+      transition: all 0.2s;
+    }
+    .sidebar a:hover, .sidebar a.active {
+      background: rgba(255,255,255,0.1);
+      color: #fff;
+    }
+    .sidebar .nav-section {
+      font-size: 11px;
+      text-transform: uppercase;
+      color: #666;
+      margin: 16px 0 8px 12px;
+      letter-spacing: 1px;
+    }
+
+    /* --- Main Content --- */
+    .main {
+      margin-left: 260px;
+      padding: 40px;
+      min-height: 100vh;
+    }
+    .main h1 {
+      font-size: 28px;
+      margin-bottom: 8px;
+      color: #1a1a2e;
+    }
+    .main .subtitle {
+      color: #666;
+      margin-bottom: 32px;
+      font-size: 15px;
+    }
+
+    /* --- Controls --- */
+    .controls {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 24px;
+      flex-wrap: wrap;
+      align-items: flex-end;
+    }
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .control-group label {
+      font-size: 13px;
+      font-weight: 600;
+      color: #555;
+    }
+    select, button {
+      padding: 10px 16px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: 14px;
+      background: #fff;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    select:hover, button:hover {
+      border-color: #4a90d9;
+    }
+    button.primary {
+      background: #4a90d9;
+      color: #fff;
+      border-color: #4a90d9;
+      font-weight: 600;
+    }
+    button.primary:hover {
+      background: #3a7bc8;
+    }
+    button.primary:disabled {
+      background: #aaa;
+      border-color: #aaa;
+      cursor: not-allowed;
+    }
+    button.download {
+      background: #28a745;
+      color: #fff;
+      border-color: #28a745;
+    }
+    button.download:hover {
+      background: #218838;
+    }
+
+    /* --- Plot Area --- */
+    .plot-container {
+      background: #fff;
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      margin-bottom: 24px;
+    }
+    .plot-container img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      margin: 0 auto;
+    }
+    .placeholder {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 400px;
+      color: #999;
+      font-size: 15px;
+    }
+
+    /* --- Log --- */
+    .log-container {
+      background: #1e1e1e;
+      border-radius: 8px;
+      padding: 16px;
+      max-height: 200px;
+      overflow-y: auto;
+      font-family: 'Consolas', 'Monaco', monospace;
+      font-size: 13px;
+      color: #ccc;
+      line-height: 1.6;
+    }
+    .log-container .info { color: #6cb6ff; }
+    .log-container .success { color: #7ee787; }
+    .log-container .error { color: #f85149; }
+    .log-container .stage { color: #d2a8ff; font-weight: bold; }
+
+    /* --- Loading Overlay --- */
+    .loading-overlay {
+      position: fixed; top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: rgba(255,255,255,0.9);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      transition: opacity 0.3s;
+    }
+    .loading-overlay.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+    .spinner {
+      width: 48px; height: 48px;
+      border: 4px solid #eee;
+      border-top-color: #4a90d9;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-overlay p {
+      margin-top: 16px;
+      color: #666;
+      font-size: 15px;
+    }
+
+    /* --- Responsive --- */
+    @media (max-width: 768px) {
+      .sidebar { display: none; }
+      .main { margin-left: 0; padding: 20px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Sidebar -->
+  <nav class="sidebar">
+    <h2>PANGEApy</h2>
+    <div class="nav-section">Interactive Tools</div>
+    <a href="#" class="active">Cell Annotation Plot</a>
+    <div class="nav-section">Documentation</div>
+    <a href="../index.html">Home</a>
+    <a href="../01_vignette_cell_annotation.html">Cell Annotation</a>
+    <a href="../02_vignette_meta_annotation.html">Meta Annotation</a>
+    <a href="../03_vignette_identifying_missing_cells.html">Missing Cells</a>
+  </nav>
+
+  <!-- Loading Overlay -->
+  <div class="loading-overlay" id="loading">
+    <div class="spinner"></div>
+    <p id="loading-text">Loading Pyodide...</p>
+  </div>
+
+  <!-- Main Content -->
+  <div class="main">
+    <h1>Cell Annotation Explorer</h1>
+    <p class="subtitle">Interactive UMAP visualization of PANGEA cell type annotations</p>
+
+    <!-- Controls -->
+    <div class="controls">
+      <div class="control-group">
+        <label for="level-select">Annotation Level</label>
+        <select id="level-select">
+          <option value="Level1">Level 1 (Broad)</option>
+          <option value="Level2">Level 2 (Fine-grained)</option>
+          <option value="PG_annotations">Combined</option>
+        </select>
+      </div>
+      <div class="control-group">
+        <label for="celltype-select">Highlight Cell Type</label>
+        <select id="celltype-select">
+          <option value="all">All cell types</option>
+        </select>
+      </div>
+      <div class="control-group">
+        <label>&nbsp;</label>
+        <button class="primary" id="run-btn" disabled onclick="generatePlot()">Generate Plot</button>
+      </div>
+      <div class="control-group">
+        <label>&nbsp;</label>
+        <button class="download" id="download-btn" style="display:none" onclick="downloadPlot()">Download PNG</button>
+      </div>
+    </div>
+
+    <!-- Plot -->
+    <div class="plot-container">
+      <div class="placeholder" id="plot-placeholder">
+        Select options above and click "Generate Plot"
+      </div>
+      <img id="plot-img" style="display:none" />
+    </div>
+
+    <!-- Log -->
+    <div class="log-container" id="log"></div>
+  </div>
+
+  <!-- Pyodide -->
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
+  <script>
+    let pyodide = null;
+    let dataLoaded = false;
+
+    // --- Logging ---
+    function log(msg, cls = 'info') {
+      const el = document.getElementById('log');
+      el.innerHTML += `<div class="${cls}">${msg}</div>`;
+      el.scrollTop = el.scrollHeight;
+    }
+    function stage(msg) { log(`[Stage] ${msg}`, 'stage'); }
+
+    // --- Fetch file to Pyodide filesystem ---
+    async function fetchToFS(url, path) {
+      const ts = Date.now();
+      const resp = await fetch(`${url}?t=${ts}`);
+      if (!resp.ok) throw new Error(`Failed to fetch ${url}: ${resp.status}`);
+      const data = new Uint8Array(await resp.arrayBuffer());
+      pyodide.FS.writeFile(path, data);
+      log(`Loaded: ${path} (${(data.length / 1024).toFixed(1)} KB)`);
+    }
+
+    // --- Initialize Pyodide ---
+    async function initPyodide() {
+      stage('Initializing Pyodide...');
+      pyodide = await loadPyodide();
+      log('Pyodide loaded', 'success');
+
+      stage('Installing packages...');
+      await pyodide.loadPackage(['numpy', 'pandas', 'matplotlib', 'micropip']);
+      const micropip = pyodide.pyimport('micropip');
+      await micropip.install('seaborn');
+      log('Packages ready', 'success');
+
+      stage('Loading data...');
+      try {
+        await fetchToFS('data/umap_annotations.csv', '/data.csv');
+        dataLoaded = true;
+        log('Data loaded', 'success');
+      } catch (e) {
+        log(`Data not found: ${e.message}. Using demo data.`, 'error');
+        await generateDemoData();
+        dataLoaded = true;
+      }
+
+      // Populate dropdowns
+      await updateCellTypes();
+
+      document.getElementById('loading').classList.add('hidden');
+      document.getElementById('run-btn').disabled = false;
+      document.getElementById('loading-text').textContent = 'Ready';
+      stage('Ready! Click "Generate Plot" to start.');
+    }
+
+    // --- Generate demo data if no real data ---
+    async function generateDemoData() {
+      log('Generating demo PBMC data...');
+      await pyodide.runPythonAsync(`
+import numpy as np
+import pandas as pd
+
+np.random.seed(42)
+n = 2638
+
+cell_types_l1 = ['T&NK', 'Monocyte', 'B_mature', 'DC', 'Megakaryocyte']
+cell_types_l2 = {
+    'T&NK': ['T_CD4_N&CM', 'T_CD8_EM', 'NK_CD16', 'T_CD4_EM_Th22'],
+    'Monocyte': ['CD14_mono', 'CD16_mono', 'ISG'],
+    'B_mature': ['Memory_switched', 'Memory_atypical', 'Naive'],
+    'DC': ['cDC2', 'pDC'],
+    'Megakaryocyte': ['Megakaryocyte']
+}
+
+centers_l1 = {
+    'T&NK': (2, 3), 'Monocyte': (-4, -1), 'B_mature': (5, -3),
+    'DC': (-2, 4), 'Megakaryocyte': (-5, -5)
+}
+weights_l1 = [0.45, 0.25, 0.15, 0.08, 0.07]
+
+l1_labels = np.random.choice(cell_types_l1, n, p=weights_l1)
+l2_labels = []
+umap1, umap2 = [], []
+
+for l1 in l1_labels:
+    cx, cy = centers_l1[l1]
+    subtypes = cell_types_l2[l1]
+    l2 = np.random.choice(subtypes)
+    l2_labels.append(l2)
+    umap1.append(cx + np.random.randn() * 1.2)
+    umap2.append(cy + np.random.randn() * 1.2)
+
+df = pd.DataFrame({
+    'UMAP_1': umap1, 'UMAP_2': umap2,
+    'Level1': l1_labels, 'Level2': l2_labels,
+    'PG_annotations': [f"{a}|{b}" for a, b in zip(l1_labels, l2_labels)],
+    'conf_score': np.random.uniform(0.7, 1.0, n).round(3)
+})
+df.to_csv('/data.csv', index=False)
+      `);
+      log('Demo data generated (2638 cells)', 'success');
+    }
+
+    // --- Update cell type dropdown ---
+    async function updateCellTypes() {
+      const level = document.getElementById('level-select').value;
+      const celltypes = await pyodide.runPythonAsync(`
+import pandas as pd
+df = pd.read_csv('/data.csv')
+sorted(df['${level}'].unique().tolist())
+      `);
+      const sel = document.getElementById('celltype-select');
+      sel.innerHTML = '<option value="all">All cell types</option>';
+      for (const ct of celltypes.toJs()) {
+        sel.innerHTML += `<option value="${ct}">${ct}</option>`;
+      }
+    }
+
+    // --- Generate Plot ---
+    async function generatePlot() {
+      const btn = document.getElementById('run-btn');
+      btn.disabled = true;
+      btn.textContent = 'Generating...';
+      stage('Generating plot...');
+
+      const level = document.getElementById('level-select').value;
+      const celltype = document.getElementById('celltype-select').value;
+
+      try {
+        await pyodide.runPythonAsync(`
+import pandas as pd
+import numpy as np
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import seaborn as sns
+import io, base64
+
+df = pd.read_csv('/data.csv')
+level_col = '${level}'
+highlight = '${celltype}'
+
+fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+
+if highlight == 'all':
+    categories = sorted(df[level_col].unique())
+    palette = sns.color_palette('tab20', len(categories))
+    color_map = dict(zip(categories, palette))
+
+    for cat in categories:
+        mask = df[level_col] == cat
+        ax.scatter(
+            df.loc[mask, 'UMAP_1'], df.loc[mask, 'UMAP_2'],
+            c=[color_map[cat]], label=cat, s=6, alpha=0.7, edgecolors='none'
+        )
+    ax.legend(
+        bbox_to_anchor=(1.02, 1), loc='upper left',
+        fontsize=9, frameon=False, markerscale=3
+    )
+else:
+    mask = df[level_col] == highlight
+    ax.scatter(
+        df.loc[~mask, 'UMAP_1'], df.loc[~mask, 'UMAP_2'],
+        c='#e0e0e0', s=4, alpha=0.3, edgecolors='none', label='Other'
+    )
+    ax.scatter(
+        df.loc[mask, 'UMAP_1'], df.loc[mask, 'UMAP_2'],
+        c='#e74c3c', s=12, alpha=0.8, edgecolors='none', label=highlight
+    )
+    ax.legend(fontsize=11, frameon=False, markerscale=3)
+
+ax.set_xlabel('UMAP 1', fontsize=12)
+ax.set_ylabel('UMAP 2', fontsize=12)
+ax.set_title(f'PANGEA Cell Annotations — {level_col}', fontsize=14, fontweight='bold')
+ax.spines[['top','right']].set_visible(False)
+plt.tight_layout()
+
+buf = io.BytesIO()
+fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+plt.close(fig)
+buf.seek(0)
+img_b64 = base64.b64encode(buf.read()).decode('utf-8')
+        `);
+
+        const b64 = pyodide.globals.get('img_b64');
+        const img = document.getElementById('plot-img');
+        img.src = `data:image/png;base64,${b64}`;
+        img.style.display = 'block';
+        document.getElementById('plot-placeholder').style.display = 'none';
+        document.getElementById('download-btn').style.display = 'inline-block';
+        log('Plot generated', 'success');
+      } catch (e) {
+        log(`Error: ${e.message}`, 'error');
+      }
+
+      btn.disabled = false;
+      btn.textContent = 'Generate Plot';
+    }
+
+    // --- Download ---
+    function downloadPlot() {
+      const img = document.getElementById('plot-img');
+      const a = document.createElement('a');
+      a.href = img.src;
+      a.download = 'pangea_cellplot.png';
+      a.click();
+    }
+
+    // --- Event Listeners ---
+    document.getElementById('level-select').addEventListener('change', () => {
+      if (dataLoaded) updateCellTypes();
+    });
+
+    // --- Start ---
+    initPyodide();
+  </script>
+</body>
+</html>
