@@ -9,11 +9,11 @@ Welcome to pangeapy's documentation!
    02_vignette_meta_annotation
    03_vignette_identifying_missing_cells
 
-.. toctree::
-   :maxdepth: 1
-   :caption: Interactive Tools
+**Interactive Tools**
 
-   Cell Annotation Explorer <pages/cellplot/index>
+- `Cell Annotation Explorer <cellplot/index.html>`_
+- `Meta Annotation Plot <metaplot/index.html>`_
+- `Uncertainty Explorer <uncertainty/index.html>`_
 
 .. toctree::
    :maxdepth: 1

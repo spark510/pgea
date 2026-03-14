@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>PANGEApy - Cell Annotation Explorer</title>
+  <title>PANGEApy - Uncertainty Explorer</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8f9fa; color: #333; }
@@ -29,12 +29,10 @@
     .control-group { display: flex; flex-direction: column; gap: 6px; }
     .control-group label { font-size: 13px; font-weight: 600; color: #555; }
     select, button { padding: 10px 16px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; background: #fff; cursor: pointer; transition: all 0.2s; }
-    select:hover, button:hover { border-color: #4a90d9; }
     button.primary { background: #4a90d9; color: #fff; border-color: #4a90d9; font-weight: 600; }
     button.primary:hover { background: #3a7bc8; }
     button.primary:disabled { background: #aaa; border-color: #aaa; cursor: not-allowed; }
     button.download { background: #28a745; color: #fff; border-color: #28a745; }
-    button.download:hover { background: #218838; }
 
     .plot-container { background: #fff; border-radius: 12px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 24px; display: none; }
     .plot-container.visible { display: block; }
@@ -61,9 +59,9 @@
   <nav class="sidebar">
     <h2>PANGEApy</h2>
     <div class="nav-section">Interactive Tools</div>
-    <a href="../cellplot/" class="active">Cell Annotation Plot</a>
+    <a href="../cellplot/">Cell Annotation Plot</a>
     <a href="../metaplot/">Meta Annotation Plot</a>
-    <a href="../uncertainty/">Uncertainty Explorer</a>
+    <a href="../uncertainty/" class="active">Uncertainty Explorer</a>
     <div class="nav-section">Documentation</div>
     <a href="../../index.html">Home</a>
   </nav>
@@ -74,30 +72,30 @@
   </div>
 
   <div class="main">
-    <h1>Cell Annotation Explorer</h1>
-    <p class="subtitle">Upload your annotation CSV to visualize UMAP cell type distributions</p>
+    <h1>Uncertainty Explorer</h1>
+    <p class="subtitle">Visualize prediction uncertainty to identify missing or novel cell types</p>
 
     <div class="upload-area" id="upload-area">
       <h3>Drop CSV file here or click to upload</h3>
       <p>Expected columns:</p>
-      <div class="format">UMAP_1, UMAP_2, Level1, Level2, PG_annotations, conf_score</div>
+      <div class="format">UMAP_1, UMAP_2, label, score_uncert, pred_uncert</div>
+      <p style="margin-top:12px; color:#999; font-size:12px;">label = original/predicted cell type, score_uncert = uncertainty score, pred_uncert = True/False flag</p>
       <input type="file" id="file-input" accept=".csv" style="display:none" />
     </div>
 
     <div class="controls" id="controls">
       <div class="control-group">
-        <label for="level-select">Annotation Level</label>
-        <select id="level-select">
-          <option value="Level1">Level 1 (Broad)</option>
-          <option value="Level2">Level 2 (Fine-grained)</option>
-          <option value="PG_annotations">Combined</option>
+        <label for="plot-type">Plot Type</label>
+        <select id="plot-type">
+          <option value="umap_uncert">UMAP — Uncertain Cells</option>
+          <option value="umap_score">UMAP — Uncertainty Score</option>
+          <option value="bar_score">Bar — Mean Uncertainty by Label</option>
+          <option value="bar_fraction">Bar — Fraction of Uncertain Cells</option>
         </select>
       </div>
       <div class="control-group">
-        <label for="celltype-select">Highlight Cell Type</label>
-        <select id="celltype-select">
-          <option value="all">All cell types</option>
-        </select>
+        <label for="label-col">Label Column</label>
+        <select id="label-col"></select>
       </div>
       <div class="control-group">
         <label>&nbsp;</label>
@@ -126,10 +124,8 @@
     }
     function stage(msg) { log(`[Stage] ${msg}`, 'stage'); }
 
-    // --- File Upload ---
     const uploadArea = document.getElementById('upload-area');
     const fileInput = document.getElementById('file-input');
-
     uploadArea.addEventListener('click', () => fileInput.click());
     uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.classList.add('dragover'); });
     uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
@@ -140,10 +136,8 @@
       if (!file.name.endsWith('.csv')) { alert('Please upload a CSV file.'); return; }
 
       document.getElementById('loading').classList.add('visible');
-      document.getElementById('loading-text').textContent = 'Loading Pyodide...';
       document.getElementById('log').classList.add('visible');
 
-      // Load Pyodide on first upload
       if (!pyodide) {
         stage('Loading Pyodide engine...');
         const script = document.createElement('script');
@@ -162,60 +156,30 @@
         log('Packages ready', 'success');
       }
 
-      // Read CSV
       stage('Reading CSV...');
-      document.getElementById('loading-text').textContent = 'Reading data...';
       const text = await file.text();
       pyodide.FS.writeFile('/data.csv', text);
 
-      // Validate columns
-      const valid = await pyodide.runPythonAsync(`
+      // Detect label columns
+      const labelCols = (await pyodide.runPythonAsync(`
 import pandas as pd
 df = pd.read_csv('/data.csv')
-cols = set(df.columns)
-required = {'UMAP_1', 'UMAP_2'}
-has_required = required.issubset(cols)
-has_required
-      `);
-      if (!valid) {
-        log('Error: CSV must contain at least UMAP_1 and UMAP_2 columns', 'error');
-        document.getElementById('loading').classList.remove('visible');
-        return;
-      }
-
-      // Detect available annotation columns
-      const availCols = (await pyodide.runPythonAsync(`
-[c for c in df.columns if c not in ['UMAP_1','UMAP_2','conf_score','score_uncert','pred_uncert']]
+skip = {'UMAP_1','UMAP_2','score_uncert','pred_uncert','conf_score'}
+[c for c in df.columns if c not in skip and not c.startswith('Unnamed')]
       `)).toJs();
 
-      const levelSelect = document.getElementById('level-select');
-      levelSelect.innerHTML = '';
-      for (const col of availCols) {
-        levelSelect.innerHTML += `<option value="${col}">${col}</option>`;
+      const labelSel = document.getElementById('label-col');
+      labelSel.innerHTML = '';
+      for (const col of labelCols) {
+        labelSel.innerHTML += `<option value="${col}">${col}</option>`;
       }
 
-      log(`Loaded: ${file.name} (${(file.size/1024).toFixed(1)} KB, ${availCols.length} annotation columns)`, 'success');
+      log(`Loaded: ${file.name} (${labelCols.length} label columns detected)`, 'success');
 
       uploadArea.style.display = 'none';
       document.getElementById('controls').classList.add('visible');
-      await updateCellTypes();
-
       document.getElementById('loading').classList.remove('visible');
-      stage('Ready! Select options and click "Generate Plot".');
-    }
-
-    async function updateCellTypes() {
-      const level = document.getElementById('level-select').value;
-      const celltypes = (await pyodide.runPythonAsync(`
-import pandas as pd
-df = pd.read_csv('/data.csv')
-sorted(df['${level}'].unique().tolist())
-      `)).toJs();
-      const sel = document.getElementById('celltype-select');
-      sel.innerHTML = '<option value="all">All cell types</option>';
-      for (const ct of celltypes) {
-        sel.innerHTML += `<option value="${ct}">${ct}</option>`;
-      }
+      stage('Ready!');
     }
 
     async function generatePlot() {
@@ -223,8 +187,8 @@ sorted(df['${level}'].unique().tolist())
       btn.disabled = true; btn.textContent = 'Generating...';
       stage('Generating plot...');
 
-      const level = document.getElementById('level-select').value;
-      const celltype = document.getElementById('celltype-select').value;
+      const plotType = document.getElementById('plot-type').value;
+      const labelCol = document.getElementById('label-col').value;
 
       try {
         await pyodide.runPythonAsync(`
@@ -234,31 +198,57 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 df = pd.read_csv('/data.csv')
-level_col = '${level}'
-highlight = '${celltype}'
+plot_type = '${plotType}'
+label_col = '${labelCol}'
 
-fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+if plot_type == 'umap_uncert':
+    fig, ax = plt.subplots(figsize=(10, 8))
+    if 'pred_uncert' in df.columns:
+        df['pred_uncert'] = df['pred_uncert'].astype(str)
+        colors = {'False': '#cccccc', 'True': '#e74c3c'}
+        for val, color in colors.items():
+            mask = df['pred_uncert'] == val
+            lbl = 'Uncertain' if val == 'True' else 'Confident'
+            ax.scatter(df.loc[mask,'UMAP_1'], df.loc[mask,'UMAP_2'],
+                       c=color, s=6 if val=='False' else 12,
+                       alpha=0.4 if val=='False' else 0.8,
+                       edgecolors='none', label=lbl)
+        ax.legend(fontsize=11, frameon=False, markerscale=3)
+    ax.set_xlabel('UMAP 1'); ax.set_ylabel('UMAP 2')
+    ax.set_title('Uncertain Cell Predictions', fontsize=14, fontweight='bold')
+    ax.spines[['top','right']].set_visible(False)
 
-if highlight == 'all':
-    categories = sorted(df[level_col].unique())
-    palette = sns.color_palette('tab20', len(categories))
-    color_map = dict(zip(categories, palette))
-    for cat in categories:
-        mask = df[level_col] == cat
-        ax.scatter(df.loc[mask,'UMAP_1'], df.loc[mask,'UMAP_2'], c=[color_map[cat]], label=cat, s=6, alpha=0.7, edgecolors='none')
-    ax.legend(bbox_to_anchor=(1.02,1), loc='upper left', fontsize=9, frameon=False, markerscale=3)
-else:
-    mask = df[level_col] == highlight
-    ax.scatter(df.loc[~mask,'UMAP_1'], df.loc[~mask,'UMAP_2'], c='#e0e0e0', s=4, alpha=0.3, edgecolors='none', label='Other')
-    ax.scatter(df.loc[mask,'UMAP_1'], df.loc[mask,'UMAP_2'], c='#e74c3c', s=12, alpha=0.8, edgecolors='none', label=highlight)
-    ax.legend(fontsize=11, frameon=False, markerscale=3)
+elif plot_type == 'umap_score':
+    fig, ax = plt.subplots(figsize=(10, 8))
+    sc = ax.scatter(df['UMAP_1'], df['UMAP_2'], c=df['score_uncert'],
+                    cmap='OrRd', s=6, alpha=0.7, edgecolors='none')
+    plt.colorbar(sc, ax=ax, label='Uncertainty Score', shrink=0.8)
+    ax.set_xlabel('UMAP 1'); ax.set_ylabel('UMAP 2')
+    ax.set_title('Uncertainty Score Distribution', fontsize=14, fontweight='bold')
+    ax.spines[['top','right']].set_visible(False)
 
-ax.set_xlabel('UMAP 1', fontsize=12)
-ax.set_ylabel('UMAP 2', fontsize=12)
-ax.set_title(f'PANGEA Cell Annotations — {level_col}', fontsize=14, fontweight='bold')
-ax.spines[['top','right']].set_visible(False)
+elif plot_type == 'bar_score':
+    fig, ax = plt.subplots(figsize=(8, max(5, len(df[label_col].unique())*0.4)))
+    order = df.groupby(label_col)['score_uncert'].mean().sort_values().index
+    sns.barplot(data=df, y=label_col, x='score_uncert', order=order,
+                errorbar='se', capsize=0.2, errwidth=1, errcolor='black',
+                linewidth=1, edgecolor='black', ax=ax)
+    ax.set_title('Mean Uncertainty Score by Cell Type', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Uncertainty Score')
+    sns.despine()
+
+elif plot_type == 'bar_fraction':
+    fig, ax = plt.subplots(figsize=(8, max(5, len(df[label_col].unique())*0.4)))
+    if 'pred_uncert' in df.columns:
+        df['pred_uncert_bool'] = df['pred_uncert'].astype(str).map({'True': True, 'False': False})
+        ct = pd.crosstab(df[label_col], df['pred_uncert_bool'], normalize='index')
+        if True in ct.columns:
+            ct[True].sort_values().plot.barh(ax=ax, width=0.8, linewidth=1, edgecolor='black', color='salmon')
+        ax.set_xlabel('Fraction of Uncertain Cells')
+        ax.set_title('Uncertain Cell Fraction by Label', fontsize=14, fontweight='bold')
+        sns.despine()
+
 plt.tight_layout()
-
 buf = io.BytesIO()
 fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
 plt.close(fig)
@@ -266,8 +256,7 @@ buf.seek(0)
 img_b64 = base64.b64encode(buf.read()).decode('utf-8')
         `);
 
-        const b64 = pyodide.globals.get('img_b64');
-        document.getElementById('plot-img').src = `data:image/png;base64,${b64}`;
+        document.getElementById('plot-img').src = `data:image/png;base64,${pyodide.globals.get('img_b64')}`;
         document.getElementById('plot-container').classList.add('visible');
         document.getElementById('download-btn').style.display = 'inline-block';
         log('Plot generated', 'success');
@@ -279,10 +268,8 @@ img_b64 = base64.b64encode(buf.read()).decode('utf-8')
     function downloadPlot() {
       const a = document.createElement('a');
       a.href = document.getElementById('plot-img').src;
-      a.download = 'pangea_cellplot.png'; a.click();
+      a.download = 'pangea_uncertainty.png'; a.click();
     }
-
-    document.getElementById('level-select').addEventListener('change', () => { if (pyodide) updateCellTypes(); });
   </script>
 </body>
 </html>

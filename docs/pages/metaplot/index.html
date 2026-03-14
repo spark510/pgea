@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>PANGEApy - Cell Annotation Explorer</title>
+  <title>PANGEApy - Meta Annotation Plot</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8f9fa; color: #333; }
@@ -29,12 +29,10 @@
     .control-group { display: flex; flex-direction: column; gap: 6px; }
     .control-group label { font-size: 13px; font-weight: 600; color: #555; }
     select, button { padding: 10px 16px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; background: #fff; cursor: pointer; transition: all 0.2s; }
-    select:hover, button:hover { border-color: #4a90d9; }
     button.primary { background: #4a90d9; color: #fff; border-color: #4a90d9; font-weight: 600; }
     button.primary:hover { background: #3a7bc8; }
     button.primary:disabled { background: #aaa; border-color: #aaa; cursor: not-allowed; }
     button.download { background: #28a745; color: #fff; border-color: #28a745; }
-    button.download:hover { background: #218838; }
 
     .plot-container { background: #fff; border-radius: 12px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 24px; display: none; }
     .plot-container.visible { display: block; }
@@ -61,8 +59,8 @@
   <nav class="sidebar">
     <h2>PANGEApy</h2>
     <div class="nav-section">Interactive Tools</div>
-    <a href="../cellplot/" class="active">Cell Annotation Plot</a>
-    <a href="../metaplot/">Meta Annotation Plot</a>
+    <a href="../cellplot/">Cell Annotation Plot</a>
+    <a href="../metaplot/" class="active">Meta Annotation Plot</a>
     <a href="../uncertainty/">Uncertainty Explorer</a>
     <div class="nav-section">Documentation</div>
     <a href="../../index.html">Home</a>
@@ -74,30 +72,29 @@
   </div>
 
   <div class="main">
-    <h1>Cell Annotation Explorer</h1>
-    <p class="subtitle">Upload your annotation CSV to visualize UMAP cell type distributions</p>
+    <h1>Meta Annotation Plot</h1>
+    <p class="subtitle">Upload metadata prediction results to visualize organ and phenotype distributions</p>
 
     <div class="upload-area" id="upload-area">
       <h3>Drop CSV file here or click to upload</h3>
-      <p>Expected columns:</p>
-      <div class="format">UMAP_1, UMAP_2, Level1, Level2, PG_annotations, conf_score</div>
+      <p>Expected columns (from meta.integrate() output):</p>
+      <div class="format">Sample (index), Organ_pred, Organ_prob, Pheno_pred, Pheno_prob</div>
+      <p style="margin-top:12px; color:#999; font-size:12px;">Optionally include clinical metadata columns (e.g. Status, Disease) for grouped analysis</p>
       <input type="file" id="file-input" accept=".csv" style="display:none" />
     </div>
 
     <div class="controls" id="controls">
       <div class="control-group">
-        <label for="level-select">Annotation Level</label>
-        <select id="level-select">
-          <option value="Level1">Level 1 (Broad)</option>
-          <option value="Level2">Level 2 (Fine-grained)</option>
-          <option value="PG_annotations">Combined</option>
+        <label for="plot-type">Plot Type</label>
+        <select id="plot-type">
+          <option value="organ">Organ Distribution</option>
+          <option value="pheno">Phenotype Distribution</option>
+          <option value="grouped">Grouped Phenotype (by metadata)</option>
         </select>
       </div>
-      <div class="control-group">
-        <label for="celltype-select">Highlight Cell Type</label>
-        <select id="celltype-select">
-          <option value="all">All cell types</option>
-        </select>
+      <div class="control-group" id="group-col-group" style="display:none">
+        <label for="group-col">Group By Column</label>
+        <select id="group-col"></select>
       </div>
       <div class="control-group">
         <label>&nbsp;</label>
@@ -126,10 +123,8 @@
     }
     function stage(msg) { log(`[Stage] ${msg}`, 'stage'); }
 
-    // --- File Upload ---
     const uploadArea = document.getElementById('upload-area');
     const fileInput = document.getElementById('file-input');
-
     uploadArea.addEventListener('click', () => fileInput.click());
     uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.classList.add('dragover'); });
     uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
@@ -140,10 +135,8 @@
       if (!file.name.endsWith('.csv')) { alert('Please upload a CSV file.'); return; }
 
       document.getElementById('loading').classList.add('visible');
-      document.getElementById('loading-text').textContent = 'Loading Pyodide...';
       document.getElementById('log').classList.add('visible');
 
-      // Load Pyodide on first upload
       if (!pyodide) {
         stage('Loading Pyodide engine...');
         const script = document.createElement('script');
@@ -162,69 +155,44 @@
         log('Packages ready', 'success');
       }
 
-      // Read CSV
       stage('Reading CSV...');
-      document.getElementById('loading-text').textContent = 'Reading data...';
       const text = await file.text();
       pyodide.FS.writeFile('/data.csv', text);
 
-      // Validate columns
-      const valid = await pyodide.runPythonAsync(`
+      // Detect extra columns for grouping
+      const extraCols = (await pyodide.runPythonAsync(`
 import pandas as pd
 df = pd.read_csv('/data.csv')
-cols = set(df.columns)
-required = {'UMAP_1', 'UMAP_2'}
-has_required = required.issubset(cols)
-has_required
-      `);
-      if (!valid) {
-        log('Error: CSV must contain at least UMAP_1 and UMAP_2 columns', 'error');
-        document.getElementById('loading').classList.remove('visible');
-        return;
-      }
-
-      // Detect available annotation columns
-      const availCols = (await pyodide.runPythonAsync(`
-[c for c in df.columns if c not in ['UMAP_1','UMAP_2','conf_score','score_uncert','pred_uncert']]
+base = {'Organ_pred','Organ_prob','Pheno_pred','Pheno_prob'}
+[c for c in df.columns if c not in base and not c.startswith('Unnamed')]
       `)).toJs();
 
-      const levelSelect = document.getElementById('level-select');
-      levelSelect.innerHTML = '';
-      for (const col of availCols) {
-        levelSelect.innerHTML += `<option value="${col}">${col}</option>`;
+      const groupCol = document.getElementById('group-col');
+      groupCol.innerHTML = '';
+      for (const col of extraCols) {
+        groupCol.innerHTML += `<option value="${col}">${col}</option>`;
       }
 
-      log(`Loaded: ${file.name} (${(file.size/1024).toFixed(1)} KB, ${availCols.length} annotation columns)`, 'success');
+      log(`Loaded: ${file.name} (${extraCols.length} extra columns available for grouping)`, 'success');
 
       uploadArea.style.display = 'none';
       document.getElementById('controls').classList.add('visible');
-      await updateCellTypes();
-
       document.getElementById('loading').classList.remove('visible');
-      stage('Ready! Select options and click "Generate Plot".');
+      stage('Ready!');
     }
 
-    async function updateCellTypes() {
-      const level = document.getElementById('level-select').value;
-      const celltypes = (await pyodide.runPythonAsync(`
-import pandas as pd
-df = pd.read_csv('/data.csv')
-sorted(df['${level}'].unique().tolist())
-      `)).toJs();
-      const sel = document.getElementById('celltype-select');
-      sel.innerHTML = '<option value="all">All cell types</option>';
-      for (const ct of celltypes) {
-        sel.innerHTML += `<option value="${ct}">${ct}</option>`;
-      }
-    }
+    document.getElementById('plot-type').addEventListener('change', () => {
+      document.getElementById('group-col-group').style.display =
+        document.getElementById('plot-type').value === 'grouped' ? 'flex' : 'none';
+    });
 
     async function generatePlot() {
       const btn = document.getElementById('run-btn');
       btn.disabled = true; btn.textContent = 'Generating...';
       stage('Generating plot...');
 
-      const level = document.getElementById('level-select').value;
-      const celltype = document.getElementById('celltype-select').value;
+      const plotType = document.getElementById('plot-type').value;
+      const groupCol = document.getElementById('group-col').value || '';
 
       try {
         await pyodide.runPythonAsync(`
@@ -234,31 +202,38 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 df = pd.read_csv('/data.csv')
-level_col = '${level}'
-highlight = '${celltype}'
+plot_type = '${plotType}'
+group_col = '${groupCol}'
 
-fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+if plot_type == 'organ':
+    fig, ax = plt.subplots(figsize=(8, 5))
+    counts = df['Organ_pred'].value_counts(normalize=True).sort_values()
+    counts.plot.barh(ax=ax, color='skyblue', edgecolor='black', linewidth=1, width=0.8)
+    ax.set_title('Predicted Organ Distribution', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Proportion')
+    sns.despine()
 
-if highlight == 'all':
-    categories = sorted(df[level_col].unique())
-    palette = sns.color_palette('tab20', len(categories))
-    color_map = dict(zip(categories, palette))
-    for cat in categories:
-        mask = df[level_col] == cat
-        ax.scatter(df.loc[mask,'UMAP_1'], df.loc[mask,'UMAP_2'], c=[color_map[cat]], label=cat, s=6, alpha=0.7, edgecolors='none')
-    ax.legend(bbox_to_anchor=(1.02,1), loc='upper left', fontsize=9, frameon=False, markerscale=3)
+elif plot_type == 'pheno':
+    fig, ax = plt.subplots(figsize=(8, 5))
+    counts = df['Pheno_pred'].value_counts(normalize=True).sort_values()
+    counts.plot.barh(ax=ax, color='salmon', edgecolor='black', linewidth=1, width=0.8)
+    ax.set_title('Predicted Phenotype Distribution', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Proportion')
+    sns.despine()
+
+elif plot_type == 'grouped' and group_col:
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ct = pd.crosstab(df[group_col], df['Pheno_pred'], normalize='index')
+    ct.plot(kind='barh', stacked=True, ax=ax, cmap='tab20', width=0.8, linewidth=1, edgecolor='black')
+    ax.legend(bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=9, frameon=False)
+    ax.set_title(f'Phenotype Distribution by {group_col}', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Proportion')
+    sns.despine()
 else:
-    mask = df[level_col] == highlight
-    ax.scatter(df.loc[~mask,'UMAP_1'], df.loc[~mask,'UMAP_2'], c='#e0e0e0', s=4, alpha=0.3, edgecolors='none', label='Other')
-    ax.scatter(df.loc[mask,'UMAP_1'], df.loc[mask,'UMAP_2'], c='#e74c3c', s=12, alpha=0.8, edgecolors='none', label=highlight)
-    ax.legend(fontsize=11, frameon=False, markerscale=3)
+    fig, ax = plt.subplots()
+    ax.text(0.5, 0.5, 'Select a group column', ha='center', va='center')
 
-ax.set_xlabel('UMAP 1', fontsize=12)
-ax.set_ylabel('UMAP 2', fontsize=12)
-ax.set_title(f'PANGEA Cell Annotations — {level_col}', fontsize=14, fontweight='bold')
-ax.spines[['top','right']].set_visible(False)
 plt.tight_layout()
-
 buf = io.BytesIO()
 fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
 plt.close(fig)
@@ -266,8 +241,7 @@ buf.seek(0)
 img_b64 = base64.b64encode(buf.read()).decode('utf-8')
         `);
 
-        const b64 = pyodide.globals.get('img_b64');
-        document.getElementById('plot-img').src = `data:image/png;base64,${b64}`;
+        document.getElementById('plot-img').src = `data:image/png;base64,${pyodide.globals.get('img_b64')}`;
         document.getElementById('plot-container').classList.add('visible');
         document.getElementById('download-btn').style.display = 'inline-block';
         log('Plot generated', 'success');
@@ -279,10 +253,8 @@ img_b64 = base64.b64encode(buf.read()).decode('utf-8')
     function downloadPlot() {
       const a = document.createElement('a');
       a.href = document.getElementById('plot-img').src;
-      a.download = 'pangea_cellplot.png'; a.click();
+      a.download = 'pangea_metaplot.png'; a.click();
     }
-
-    document.getElementById('level-select').addEventListener('change', () => { if (pyodide) updateCellTypes(); });
   </script>
 </body>
 </html>
