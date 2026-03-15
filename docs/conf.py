@@ -36,6 +36,3 @@ napoleon_numpy_docstring = True
 # Paths
 templates_path = ['_templates']
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
-
-# Extra paths (copied as-is to build output)
-html_extra_path = ['pages']

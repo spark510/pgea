@@ -12,23 +12,13 @@ It provides a unified interface for:
 
 ----
 
-Interactive Tools
------------------
+.. toctree::
+   :maxdepth: 1
+   :caption: Interactive Tools
 
-Explore your annotation results directly in the browser — no installation required.
-
-.. list-table::
-   :widths: 30 70
-   :header-rows: 0
-
-   * - `Cell Annotation Explorer <cellplot/>`_
-     - UMAP visualization of cell type annotations (Level1 / Level2 / Combined)
-   * - `Meta Annotation Plot <metaplot/>`_
-     - Organ and phenotype distribution bar charts with clinical metadata grouping
-   * - `Uncertainty Explorer <uncertainty/>`_
-     - Identify missing or novel cell types via uncertainty score visualization
-
-----
+   tool_cellplot
+   tool_metaplot
+   tool_uncertainty
 
 .. toctree::
    :maxdepth: 1
